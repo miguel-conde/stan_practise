@@ -1,0 +1,469 @@
+---
+title: "fst_regression"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Data
+
+```{r}
+library(tidyverse)
+library(rethinking)
+
+data(Howell1)
+
+d <- Howell1
+
+head(d)
+```
+
+```{r}
+str(d)
+```
+
+```{r}
+d2 <- d %>% filter(age >= 18)
+```
+
+```{r}
+plot(density(d2$height))
+```
+
+# Primer modelo
+
+Posible modelo:
+
+$$
+h_i \sim Normal(\mu, \sigma) \\
+\mu \sim Normal(183, 30) \\
+\sigma \sim Unif(0, 50)
+$$
+¿Qué pinta tienen las prior?
+
+```{r}
+curve(dnorm(x, 183, 30), from = 100, to = 250, main = "Sample prior $mu")
+```
+```{r}
+curve(dunif(x, 0, 50), from = -10, to = 60, main = "Sample prior $sigma")
+```
+**PRIOR PREDICTIVE**:
+
+```{r}
+sample_mu <- rnorm(1e4, 183, 30)
+sample_sigma <- runif(1e4, 0, 50)
+
+predictive_prior_sample_h <- rnorm(1e4, sample_mu, sample_sigma)
+```
+
+```{r}
+plot(density(predictive_prior_sample_h), main = "h - Predictive prior sample")
+```
+
+La distribución *posterior* será ahora:
+
+$$
+\Pr(\mu, \sigma | h) = \frac{\Pi_i\text{Normal}(h_i|\mu, \sigma)}
+{\int \int \left[\Pi_i\text{Normal}(h_i|\mu, \sigma)\right] \text{Normal}(183, 30) \text{Unif}(0, 50) d\mu d\sigma} \text{Normal}(183, 30) \text{Unif}(0, 50)
+$$
+## Posterior mediante grid
+
+```{r}
+mu.list    <- seq(from = 150, to = 160, length.out = 100)
+sigma.list <- seq(from = 7, to = 9, length.out = 100)
+
+post <- expand.grid(mu = mu.list, sigma = sigma.list)
+
+post$LL <- sapply(1:nrow(post), function(i) sum(dnorm(d2$height, 
+                                                      post$mu[i], 
+                                                      post$sigma[i], 
+                                                      log = TRUE)))
+post$prod <- post$LL + 
+  dnorm(post$mu, 183, 30, TRUE) +
+  dunif(post$sigma, 0, 50, TRUE)
+
+# Finally, the obstacle for getting back on the probability scale is that 
+# rounding error is always a threat when moving from log-probability to 
+# probability. If you use the obvious approach,like exp(post$prod), you’ll get a 
+# vector full of zeros, which isn’t very helpful.This is a result of R’s rounding 
+# very small probabilities to zero. Remember, in large samples, all unique samples 
+# are unlikely. This is why you have to work with log-probability. The code in 
+# the box dodges this problem by scaling all of the log-products by the maximum 
+# log-product. As a result, the values in post$prob are not all zero, but they 
+# also aren’t exactly probabilities. Instead they are relative posterior 
+# probabilities. But that’s good enough for what we wish to do with these values.
+
+post$prob <- exp(post$prod - max(post$prod))
+```
+
+```{r}
+contour_xyz(post$mu, post$sigma, post$prob, xlab = "mu", ylab = "sigma")
+```
+
+```{r}
+image_xyz(post$mu, post$sigma, post$prob, xlab = "mu", ylab = "sigma")
+```
+## Muestreo de la *posterior*
+
+```{r}
+sample.rows  <- sample(1:nrow(post), size = 1e4, replace = TRUE, prob = post$prob)
+sample.mu    <- post$mu[sample.rows]
+sample.sigma <- post$sigma[sample.rows]
+```
+
+```{r}
+plot(sample.mu, sample.sigma, cex=0.5, pch=16, col = col.alpha(rangi2, 0.1))
+```
+
+Formas de las distribuciones *posterior* **marginales**:
+
+```{r}
+dens(sample_mu)
+```
+```{r}
+dens(sample.sigma)
+```
+
+```{r}
+PI(sample_mu)
+```
+
+```{r}
+PI(sample_sigma)
+```
+
+## Muestreo de la *posterior* con aproximación cuadrática
+
+Estimamos la *posterior* mediante aproximación cuadrática:
+
+```{r}
+flist <- alist(
+  height ~ dnorm(mu,sigma),
+  mu ~ dnorm(183, 30),
+  sigma ~ dunif(0, 50)
+)
+```
+
+```{r}
+m4.1 <- quap(flist, data = d2)
+```
+
+```{r}
+precis(m4.1)
+```
+
+Matriz varianza - covarianza (ya que estamos trabajando con una distribución
+gaussiana bidimensional):
+
+```{r}
+vcov(m4.1)
+```
+
+Vector de varianzas:
+
+```{r}
+diag( vcov(m4.1))
+```
+
+Matriz de corrleaciones:
+
+```{r}
+cov2cor( vcov(m4.1))
+```
+Ahora el muestreo:
+
+```{r}
+post <- extract.samples(m4.1, n = 1e4)
+```
+
+
+```{r}
+head(post)
+```
+
+```{r}
+precis(post)
+```
+```{r}
+plot(post)
+```
+
+Este muestreo es como hacer:
+
+```{r}
+MASS::mvrnorm(n = 1e4, mu = coef(m4.1), Sigma = vcov(m4.1)) %>% head()
+```
+
+# Predicción Lineal
+
+```{r}
+plot(height ~weight, d2)
+```
+The strategy is to make the parameter for the mean of
+a Gaussian distribution, $\mu$, into a linear function of th epredictor variable and other,new
+parameters that we invent.
+
+## Modelo
+
+$$
+h_i \sim \text{Normal}(\mu_i, \sigma) \\
+\mu_i = \alpha + \beta (x_i - \bar{x}) \\
+\alpha \sim \text{Normal}(183, 30) \\
+\beta \sim \text{Normal}(0, 10) \\
+\sigma \sim \text{Normal}(0, 50)
+$$
+
+Línea 2 NO ES ESTOCÁSTICA
+
+## Priors
+
+Predictive Sampling de las Priors $\alpha$ y $\beta$:
+
+```{r}
+set.seed(2971)
+
+N <- 100
+
+alpha <- rnorm(N, 183, 30)
+beta <- rnorm(N, 0, 10)
+```
+
+
+```{r}
+plot(NULL,
+     xlim = range(d2$weight), ylim = c(-100, 400),
+     xlab = "weight", ylab="height")
+abline(h = 0, lty = 2)
+abline(h = 272, lty = 1, lwd = 0.5)
+mtext( "b~dnorm(0,10)")
+xbar <- mean(d2$weight)
+
+for (i in 1:N) curve(alpha[i] + beta[i] * (x - xbar),
+                     from = min(d2$weight), to = max(d2$weight), 
+                     add = TRUE,
+                     col = col.alpha("black", 0.2))
+```
+The
+pattern doesn’t look like any human population at all. It essentially says that the relationship between weight and height could be absurdly positive or negative. Before we’ve even seen
+the data, this is a bad model. Can we do better?
+
+$$
+\beta \sim \text{Log-Normal}(0, 1)
+$$
+```{r}
+b <- rlnorm(1e4, 0, 1)
+dens(b, xlim = c(0, 5), adj = 0.1)
+```
+
+Nueva prior-predictive sample:
+
+```{r}
+set.seed(2971)
+
+N <- 100
+
+alpha <- rnorm(N, 183, 30)
+beta <- rlnorm(N, 0, 10)
+```
+
+
+```{r}
+plot(NULL,
+     xlim = range(d2$weight), ylim = c(-100, 400),
+     xlab = "weight", ylab="height")
+abline(h = 0, lty = 2)
+abline(h = 272, lty = 1, lwd = 0.5)
+mtext( "log(b)~dnorm(0, 1)")
+xbar <- mean(d2$weight)
+
+for (i in 1:N) curve(alpha[i] + beta[i] * (x - xbar),
+                     from = min(d2$weight), to = max(d2$weight), 
+                     add = TRUE,
+                     col = col.alpha("black", 0.2))
+```
+To figure out what this prior implies, we have to simulate
+the prior predictive distribution. There is no other reliable way to understand.
+
+## Posterior
+
+```{r}
+# define the average weight, x-bar
+xbar <- mean(d2$weight)
+
+# fit model
+m4.3 <- quap(
+  alist(
+    height ~ dnorm(mu, sigma),
+    mu <- a + b * (weight - xbar),
+    a ~ dnorm(178, 20),
+    b ~ dlnorm(0, 1),
+    sigma ~ dunif(0, 50)
+  ), data=d2)
+```
+
+## Interpretación de la posterior
+
+### Tablas de las distribuciones marginales
+
+```{r}
+precis(m4.3)
+```
+```{r}
+round(vcov(m4.3), 3)
+```
+```{r}
+pairs(m4.3)
+```
+
+### Gráficos posterior - datos
+
+```{r}
+plot(height ~ weight, data = d2, col = rangi2)
+post <- extract.samples(m4.3)
+a_map <- mean(post$a)
+b_map <- mean(post$b)
+curve(a_map + b_map * (x - xbar), add = TRUE)
+```
+
+```{r}
+# extract 20 samples from the posterior
+post <- extract.samples(m4.3, n = 20)
+
+# displayrawdataandsamplesize
+plot(d2$weight, d2$height,
+      xlim = range(d2$weight), ylim = range(d2$height),
+      col = rangi2, xlab = "weight", ylab = "height")
+
+# plotthelines,withtransparency
+for (i in 1:20)
+  curve(post$a[i] + post$b[i] * (x - mean(d2$weight)),
+         col = col.alpha("black", 0.3), add=TRUE)
+```
+
+### Intervalos y contornos de regresión
+
+A partir de las muestras de la posterior podemos sacar 10 000 valores de $\mu$ para
+un individuo  que pese 50 kg:
+
+```{r}
+post <- extract.samples(m4.3)
+mu_at_50 <-post$a + post$b * (50 - xbar)
+
+dens( mu_at_50,col=rangi2,lwd=2,xlab="mu|weight=50")
+```
+Como las componentes de $\mu$ son distribuciones, también lo es $\mu$. En este caso, 
+como las primeras son gaussianas, también lo es la distribución de $\mu$.
+
+Por lo tanto, podemos sacar intervalos de ella:
+
+```{r}
+PI(mu_at_50, prob = 0.89)
+```
+
+Si queremos dibujar intervalos del 89% en toda la recta, tenemos que hacer este cálculo 
+para todos los pesos, no solo para 50 kg.
+
+```{r}
+mu <- link(m4.3)
+str(mu)
+```
+
+Cada fila es una muestra de la distribución posterior y cada columna corresponde
+a un caso (fila) en los datos.
+
+```{r}
+dim(mu)
+```
+
+Si lo que queremos es un distribución para cada peso:
+
+#### Paso 1 - `link()`
+```{r}
+# define sequence of weights to compute predictions for
+# these values will be on the horizontal axis. 46 valores:
+weight.seq <- seq(from = 25, to = 70, by = 1)
+
+# use link tocompute mu
+# for each sample from posterior
+# and for each weight in weight.seq
+mu <- link(m4.3, data = data.frame(weight = weight.seq))
+str(mu)
+```
+Visualicemos:
+
+```{r}
+# use type ="n" to hide raw data
+plot(height ~ weight, d2, type = "n")
+
+# loop over samples and plot each mu value
+for (i in 1:100) points(weight.seq, mu[i,],
+                        pch=16, col = col.alpha(rangi2, 0.1))
+```
+#### Paso 2 - `mean()` or `median()` + `PI()`
+
+Paso final: 
+
+```{r}
+# summarize the distribution of mu
+mu.mean <- apply(mu, 2, mean)
+mu.PI <- apply(mu, 2, PI, prob = 0.89)
+```
+
+
+#### Paso 3 - Plot with `shade()` and `line()`
+
+```{r}
+# plot raw data
+# fading out points to make line and interval more visible
+plot(height ~ weight, data = d2, col = col.alpha(rangi2, 0.5))
+
+# plot the MAPline, aka the mean mu for each weight
+lines( weight.seq,mu.mean)
+
+# plot a shaded region for 89% PI
+shade(mu.PI, weight.seq)
+```
+Esta técnica permite dibujar medias e intervalos de las predicciones posterior
+independientemente del modelo.
+
+### Intervalos de predicción
+
+```{r}
+sim.height <- sim(m4.3, data = list(weight = weight.seq))
+str(sim.height)
+```
+
+Esta matriz es parecida a la anterior pero ahora contiene simulaciones de la
+altura, no distribuciones de la altura media plausible.
+
+Igual que antes:
+
+```{r}
+mu.HPDI   <- apply(sim.height, 2, HPDI, prob = 0.89)
+height.PI <- apply(sim.height, 2, PI, prob = 0.89)
+```
+
+Y ahora pintamos todo:
+
+```{r}
+# plot raw data
+plot(height ~ weight, d2, col = col.alpha(rangi2, 0.5))
+
+# draw MAP line - the average line
+lines(weight.seq, mu.mean)
+
+# draw HPDI region for line - the shaded region of 89% plausible μ
+shade(mu.HPDI, weight.seq, col = col.alpha("red", 0.35))
+
+# draw PI region for simulated heights - the boundaries of the simulated heights 
+# the model expects
+shade(height.PI, weight.seq, col = col.alpha("blue", 0.35))
+```
+
+## Curvas a partir de líneas
+
+### Polinomios
+
+### Splines

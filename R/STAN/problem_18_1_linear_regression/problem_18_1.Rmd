@@ -1,0 +1,294 @@
+---
+title: "Ch. 18 - Linear Regression Models - Problem 18.1 Crime and Punishment"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+```
+
+
+The data in linearRegression_crimePunishment.csv contains the murder rate per capita and the
+rate of automobile crimes per 100,000 individuals (both on the log scale) in the ten US States that
+have changed their legislation on capital punishment since 1960 (in all cases the states abolished capital punishment). We also include a dummy variable (“law”) that is 1 if the state allows capital punishment in that year, and 0 otherwise. The crime data is from [http://www.disastercenter.com](http://www.disastercenter.com).
+
+```{r}
+cp_data <- readr::read_csv(here::here("STAN", "data", 
+                                      "linearRegression_crimePunishment.csv")) %>% 
+  select(-X1) %>% janitor::clean_names() %>% 
+  mutate(state_name = factor(state_name),
+         state = as.integer(state),
+         law = as.integer(law))
+```
+
+
+# Problem 18.1.1. Graph the data and comment on any trends.
+
+```{r}
+library(ggplot2)
+
+p <- ggplot(data = cp_data, aes(x = year)) + 
+  geom_line(aes(y = murder), color = "red") + 
+  geom_line(aes(y = car), color = "green") + 
+  geom_line(aes(y = law), color = "blue") +
+  facet_grid(rows = vars(state_name))
+
+p
+```
+
+There seems to be some association between the
+murder rate and auto crimes. In all cases it is difficult to visually discern an impact of the change
+in legislation.
+
+# Problem 18.1.2.
+
+A simple model for murder rates is of the form:
+
+$$
+murder_{i,t} ∼ N(\alpha + \beta \times penalty_{i,t} + \gamma \times car_{i,t}, \sigma) 
+$$
+where we assume that the effect of having the death penalty is given by β, which is assumed
+to be the same across all states. We include $car_{i,t}$ – a measure of crimes on automobiles, as an
+independent variable to proxy for the contemporaneous underlying level of crime. Estimate this
+model and hence determine whether the death penalty acts as a deterrent to murder.
+
+```{r}
+library(rstan)
+
+options(mc.cores = parallel:: detectCores())
+rstan_options(auto_write = TRUE)
+
+data_list <- list(N       = nrow(cp_data),
+                  murder  = cp_data$murder,
+                  penalty = cp_data$law,
+                  car     = cp_data$car)
+
+set.seed = 1
+
+fit <- stan(here::here("STAN", "problem_18_1_linear_regression", "c_p.stan"), 
+            data = data_list, 
+            iter = 1000, 
+            chains = 4, 
+            warmup = 500)
+```
+
+```{r}
+print(fit, c("alpha", "beta_car", "beta_penalty", "sigma", "lp__"))
+```
+
+Where we see that we estimate that the imposition of the death penalty on average raises the
+murder rate by on average 24%!
+
+# Problem 18.1.3. 
+
+An alternative model allows there to be state-level effects:
+
+$$
+murder_{i,t} ∼ N(\alpha_i + \beta_i \times penalty_{i,t} + \gamma_i \times car_{i,t}, \sigma_i)
+$$
+
+where we assume that $\alpha_i ∼ N(\bar{\alpha}, \sigma_\alpha)$, $\beta_i ∼ N(\bar{\beta}, \sigma_\beta)$ and $\gamma_i ∼ N(\bar{\gamma}, \sigma_\gamma)$ (we assume fully heterogeneous estimates for $\sigma$). Estimate the above model and compare the results with the homogeneous coefficient model.
+
+```{r}
+data_list <- list(K       = cp_data$state_name %>% unique %>% length,
+                  N       = nrow(cp_data),
+                  murder  = cp_data$murder,
+                  penalty = cp_data$law,
+                  car     = cp_data$car,
+                  state   = cp_data$state)
+
+set.seed = 1
+
+fit_2 <- stan(here::here("STAN", "problem_18_1_linear_regression", "c_p_hyer.stan"), 
+              data = data_list, 
+              iter = 2000, 
+              chains = 4, 
+              warmup = 1000)
+```
+
+```{r}
+print(fit_2, c("alpha", "beta_car", "beta_penalty", "sigma", "alpha_top",
+             "sigma_alpha_top", "beta_car_top", "sigma_car_top",
+             "beta_penalty_top", "sigma_penalty_top", "alpha_average",
+             "beta_car_average", "beta_penalty_average", "lp__"))
+```
+
+A mean effect size of a 25% reduction in murder rates although with a much wider range of
+effects.
+
+# Problem extra. (Not in main text but wanted to include) 
+
+Another model allows there to be time
+trends in the data:
+
+$$
+murder_{i,t} ∼ N(\alpha + \delta_i \times t + \beta \times penalty_{i,t} + \gamma \times car_{i,t}, \sigma) 
+$$
+
+where $δ_i ∼ N(\bar{\delta}, σ_\delta)$. Again estimate this model and compare the effect size of the death penalty
+across the three models.
+
+```{r}
+data_list <- list(K       = cp_data$state_name %>% unique %>% length,
+                  N       = nrow(cp_data),
+                  murder  = cp_data$murder,
+                  penalty = cp_data$law,
+                  car     = cp_data$car,
+                  state   = cp_data$state,
+                  t       = cp_data$year - min(cp_data$year + 1))
+
+set.seed = 1
+
+fit_3 <- stan(here::here("STAN", "problem_18_1_linear_regression", "c_p_hyer_2.stan"), 
+              data = data_list, 
+              # control = list(max_treedepth = 12),
+              iter = 2000, 
+              chains = 4, 
+              warmup = 1000)
+```
+
+```{r}
+print(fit_3, c("alpha", "delta", "beta_car", "beta_penalty", "sigma",
+               "alpha_top", "sigma_alpha_top", 
+               "delta_top", "sigma_delta_top",
+               "beta_car_top", "sigma_car_top",
+               "beta_penalty_top", "sigma_penalty_top", 
+               "alpha_average", 
+               "delta_average", 
+               "beta_car_average", 
+               "beta_penalty_average", 
+               "lp__"))
+```
+
+```{r}
+library(loo)
+
+logLikelihood_homogeneous <- extract_log_lik(fit, "logLikelihood")
+WAIC_homogeneous <- waic(logLikelihood_homogeneous)
+
+logLikelihood_state_level_no_trend <- extract_log_lik(fit_2, "logLikelihood")
+WAIC_state_level_no_trend <- waic(logLikelihood_state_level_no_trend)
+
+logLikelihood_state_level_with_trend <- extract_log_lik(fit_3, "logLikelihood")
+WAIC_state_level_with_trend <- waic(logLikelihood_state_level_with_trend)
+
+compare(WAIC_homogeneous, 
+        WAIC_state_level_no_trend, 
+        WAIC_state_level_with_trend)
+loo_compare(WAIC_homogeneous, 
+        WAIC_state_level_no_trend, 
+        WAIC_state_level_with_trend)
+```
+
+```{r}
+LOO_homogeneous <- loo(logLikelihood_homogeneous)
+LOO_state_level_no_trend <- loo(logLikelihood_state_level_no_trend)
+LOO_state_level_with_trend <- loo(logLikelihood_state_level_with_trend)
+
+compare(LOO_homogeneous, 
+        LOO_state_level_no_trend, 
+        LOO_state_level_with_trend)
+loo_compare(LOO_homogeneous, 
+            LOO_state_level_no_trend, 
+            LOO_state_level_with_trend)
+
+```
+
+# Problem 18.1.5. 
+
+Critically evaluate the best-performing model and hence any conclusions that
+can be drawn from this analysis.
+
+
+# Some plots
+
+[Plotting MCMC draws using the bayesplot package](https://mc-stan.org/bayesplot/articles/plotting-mcmc-draws.html)
+
+```{r}
+library(bayesplot)
+
+
+posterior <- as.array(fit)
+dim(posterior)
+
+# dimnames(posterior)
+```
+
+## Posterior uncertainty intervals
+
+```{r}
+color_scheme_set("red")
+mcmc_intervals(posterior, pars = c("alpha","beta_car", "beta_penalty", "sigma"))
+```
+
+```{r}
+mcmc_areas(
+  posterior,
+  pars = c("alpha","beta_car", "beta_penalty", "sigma"),
+  prob = 0.8, # 80% intervals
+  prob_outer = 0.99, # 99%
+  point_est = "mean"
+)
+```
+
+## Univariate marginal posterior distributions
+
+```{r, eval = FALSE}
+color_scheme_set("green")
+mcmc_hist(posterior, 
+          pars = c(mcmc_areas(posterior,
+                              pars = c("alpha", "beta_car", "beta_penalty", "sigma"),
+                              prob = 0.8, # 80% intervals
+                              prob_outer = 0.99, # 99%
+                              point_est = "mean")))
+```
+
+```{r}
+color_scheme_set("blue")
+mcmc_hist(posterior, pars = c("alpha", "beta_car", "beta_penalty", "sigma"),
+          transformations = list("sigma" = "log"))
+```
+
+```{r}
+color_scheme_set("brightblue")
+mcmc_hist_by_chain(posterior, pars = c("alpha", "beta_car", "beta_penalty", "sigma"))
+```
+
+```{r}
+color_scheme_set("purple")
+mcmc_dens(posterior, pars = c("alpha", "beta_car", "beta_penalty", "sigma"))
+```
+
+```{r}
+mcmc_dens_overlay(posterior, pars = c("alpha", "beta_car", "beta_penalty", "sigma"))
+```
+
+```{r}
+color_scheme_set("teal")
+mcmc_violin(posterior, pars = c("alpha", "beta_car", "beta_penalty", "sigma"), probs = c(0.1, 0.5, 0.9))
+```
+
+
+# Bivariate plots
+
+```{r}
+color_scheme_set("gray")
+mcmc_scatter(posterior, pars = c("alpha", "beta_car"),
+             size = 1.5, alpha = 0.5)
+```
+
+```{r}
+# requires hexbin package
+if (requireNamespace("hexbin", quietly = TRUE)) {
+  mcmc_hex(posterior, pars = c("alpha", "beta_car"))
+}
+```
+
+```{r}
+color_scheme_set("pink")
+mcmc_pairs(posterior, pars = c("alpha", "beta_car", "beta_penalty", "sigma"),
+           off_diag_args = list(size = 1.5))
+```
+

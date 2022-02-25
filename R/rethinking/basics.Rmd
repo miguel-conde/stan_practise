@@ -1,0 +1,325 @@
+---
+title: "Bayesian Basics"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(rethinking)
+```
+
+
+# Problema de juguete
+
+Tiramos 9 veces un globo terráqueo al aire y anotamos si, al recogerlo con la
+mano, la punta dle dedo índice señala agua o tierra.
+
+Lo hacemos 9 veces y obtenemos el siguiente resultado:
+
+```
+A T A A A T A T A
+```
+
+Es decir, 6 aguas y 3 tierras:
+
+```{r}
+N <- 9
+k <- 6
+```
+
+Queremos estimar el % de superficie del globo correspondiente a "agua".
+
+# Modelado
+
+Podemos modelar el problema con una distribución (función masa de probabilidad) 
+binomial: dada la probabilidad $p$ (la fracción de superficie del globo 
+correspondiente a "agua"), la probabilidad de obtener $k$ "aguas" en $N$ intentos:
+
+$$
+\Pr(N, k, p) = 
+\begin{pmatrix}
+N \\
+k
+\end{pmatrix} p^k (1 - p)^{N-k}
+$$
+
+Pero $p$, a su vez, es desconocida, es el parámetro que queremos estimar a partir de los
+datos. Supongamos "a priori" que el parámetro $p$ sigue una función densidad de 
+probabilidad uniforme:
+
+$$
+f(p) = 
+\begin{cases}
+1 & 0 \leq p \leq 1 \\
+0 & p < 0, p > 1
+\end{cases}
+$$
+
+Lo que tratamos de estimar a partir de los datos obtenidos ("a posteriori") es, 
+aplicando el teorema de Bayes:
+
+$$
+\Pr(p|N = 9, k = 6) = \frac{\Pr(N = 9, k = 6 | p) \Pr(p)}{\Pr(N = 9, k = 6)}
+$$
+
+Hay varias formas de estimar la distribución posterior. En este caso solo hay 1
+parámetro y, a efectos ilustrativos, funcionará el método *grid*.
+
+```{r}
+L_GRID <- 100
+
+p_grid <- seq(0, 1, length.out = L_GRID)
+
+prior <- dunif(p_grid)
+
+likelihood <- dbinom(x = k, size = N, prob = p_grid)
+
+posterior <- likelihood * prior / sum(likelihood * prior)
+```
+
+```{r}
+plot(p_grid, posterior, type = "b",
+     ylab = "Posteior", xlab = "p")
+```
+
+
+# Muestreo de la posterior
+
+Lo más frecuente será no poder estimar directamente la distribución posterior, 
+pero si - contraintiuitivamente - obtener muestras de ella.
+
+En nuestro caso:
+
+```{r}
+L_POST_SAMPLE <- 1e4
+samples <- sample(x = p_grid, 
+                  size = L_POST_SAMPLE, 
+                  replace = TRUE,
+                  prob = posterior)
+```
+
+```{r}
+hist(samples, freq = FALSE,
+     xlab = "p", ylab = "density")
+lines(density(samples), col = "blue")
+lines(p_grid, L_GRID*posterior, col = "red")
+legend("topleft", legend = c("Density", "Posterior"), 
+       lty = 1, col = c("blue", "red"), bty = "n")
+```
+
+Esta muestra de la posterior es el estimador que nos ofrece este enfoque.
+
+# Resúmenes del estimador
+
+## Entre límites
+
+Probabilidad de que la proporción de agua sea menor que 50%:
+
++ De la distribución posterior:
+
+```{r}
+sum(posterior[p_grid < 0.5])
+```
++ A partir de la muestra de la distribución posterior:
+
+```{r}
+sum(samples < 0.5) / length(samples)
+```
+
+Cuál es la probabilidad de que la proporción de agua esté entre 50 y 75%:
+
+```{r}
+sum(posterior[p_grid > 0.5 & p_grid < .75])
+```
+```{r}
+sum(samples > 0.5 & p_grid < .75 ) / length(samples)
+```
+
+## Masa de probabilidad
+
+Entre qué valores de $p$ se encuentra el 80% inferior de la probabilidad posterior:
+
+```{r}
+quantile(samples, .8)
+```
+80% central de la probabilidad posterior (es un ***Percentile Interval***, PI):
+
+```{r}
+quantile(samples, c(0.1, 0.9))
+```
+Si la muestra está sesgada mejor usar los ***Highest Posterior Density Intervals** * (HPDI),
+el intervalo *más estrecho* de probabilidades posteriores que contenga la masa de 
+probabilidad que se especifique.
+
+Por ejemplo:
+
+```{r}
+HPDI(samples, 0.8)
+```
+(Es muy parecido al PI porque esta muestra no está muy sesgada)
+
+## Estimaciones puntuales
+
+Si hubiera que resumir toda la distribución posterior con un solo número a partir
+de su muestra ¿cuál usar?
+
+¿*Maximum a posteriori* (MAP) = MODA?
+
+```{r}
+p_grid[which.max(posterior)]
+```
+```{r}
+chainmode(samples, adj = 0.01)
+```
+¿O mejor la media o la mediana?
+
+```{r}
+mean(samples)
+```
+
+```{r}
+median(samples)
+```
+
+Se ve mucho mejor si forzamos los datos. Supongamos que los resultados han
+sido 3 "aguas" en 3 intentos:
+
+```{r}
+likelihood_2 <- dbinom(3, size = 3, prob = p_grid)
+posterior_2 <- prior * likelihood_2
+posterior_2 <- posterior_2 / sum(posterior_2)
+
+samples_2 <- sample(p_grid, L_POST_SAMPLE, replace = TRUE, prob = posterior_2)
+```
+
+```{r}
+hist(samples_2, freq = FALSE,
+     xlab = "p", ylab = "density")
+lines(density(samples_2), col = "blue")
+lines(p_grid, L_GRID*posterior_2, col = "red")
+legend("topleft", legend = c("Density", "Posterior"), 
+       lty = 1, col = c("blue", "red"), bty = "n")
+```
+
+Ahora, en cuanto a intervalos:
+
+```{r}
+quantile(samples_2, c(0.1, 0.9))
+```
+
+```{r}
+HPDI(samples_2, 0.8)
+```
+
+Y en cuanto a estimaciones puntutuales:
+
+```{r}
+p_grid[which.max(posterior_2)]
+```
+
+```{r}
+chainmode(samples_2, adj = 0.01)
+```
+
+```{r}
+mean(samples_2)
+```
+
+```{r}
+median(samples_2)
+```
+
+```{r}
+plot(p_grid, posterior_2, type = "l",
+     xlab = "Posterior", ylab = "p")
+
+abline(v = mean(samples_2), lty = 2, col = "blue")
+abline(v = median(samples_2), lty = 2, col = "red")
+abline(v = p_grid[which.max(posterior_2)], lty = 2, col = "green")
+
+legend("topleft",
+       legend = c("Mean", "Median", "Mode"),
+       col = c("blue", "red", "green"),
+       lty = 2,
+       bty = "n")
+```
+
+
+### Función de pérdidas
+
+Para elegir entre posibles valores puntuales podemos usar una *loss function*.
+
+Por ejemplo, si el verdadero $p$ fuera 0.5, el error L1 ponderado sería:
+
+```{r}
+sum(posterior * abs(0.5 - p_grid))
+```
+Tratando a cada valor de `p_grid` como si fuera verdadero:
+
+```{r}
+loss <- sapply(p_grid, function(d) sum(posterior_2 * abs(d - p_grid)))
+```
+
+obtenemos los errores L1 para cada posible valor de $p$:
+
+```{r}
+plot(p_grid, loss, type = "l",
+     main = "Loss Function - L1", xlab = "p", ylab = "Loss")
+
+abline(v = p_grid[which.min(loss)], lty = 2, col = "red")
+```
+El valor mínimo:
+
+```{r}
+p_grid[which.min(loss)]
+```
+
+Es la mediana de la muestra de la distribución posterior:
+
+```{r}
+median(samples_2)
+```
+Podíamos haber usado otra función de pérdidas:
+
+```{r}
+loss <- sapply(p_grid, function(d) sum(posterior_2 * (d - p_grid)^2))
+```
+
+```{r}
+plot(p_grid, loss, type = "l",
+     main = "Loss Function - L2", xlab = "p", ylab = "Loss")
+
+abline(v = p_grid[which.min(loss)], lty = 2, col = "blue")
+```
+cuyo mínimo coincide con la media:
+
+```{r}
+p_grid[which.min(loss)]
+```
+
+```{r}
+sum(p_grid*posterior_2)
+```
+
+
+```{r}
+mean(samples_2)
+```
+
+
+
+# Muestreo predictivo
+
+```{r}
+w <- rbinom(length(samples), size=9, prob = samples)
+```
+
+```{r}
+hist(w)
+```
+
+

@@ -1,0 +1,250 @@
+---
+title: "Regressión multivariable"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Asociación espúrea
+
+```{r}
+library(tidyverse)
+
+# load data and copy
+library(rethinking)
+
+data(WaffleDivorce)
+d <- WaffleDivorce
+
+# standardize variables
+d$D <-standardize(d$Divorce)
+d$M <-standardize(d$Marriage)
+d$A <-standardize(d$MedianAgeMarriage)
+```
+
+```{r}
+d %>% select(D, M, A) %>% psych::pairs.panels()
+```
+
+Modelo de regresión con Median Age:
+
+$$
+D_i \sim \text{Normal}(\mu_i, \sigma) \\
+\mu_i = \alpha + \beta_{A} A_i \\
+\alpha \sim \text{Normal}(0, 0.2)\\
+\beta_{A} \sim \text{Normal}(0, 0.5) \\ 
+\sigma \sim \text{Exponential}(1) 
+$$
+
+```{r}
+m5.1 <- quap(
+  alist(
+    D ~ dnorm(mu, sigma),
+    mu <- a + bA * A,
+    a ~ dnorm(0, 0.2),
+    bA ~ dnorm(0, 0.5),
+    sigma ~ dexp(1)
+  ), data=d)
+```
+
+Simulación a partir de las priors:
+
+```{r}
+set.seed(10)
+prior <- extract.prior(m5.1)
+mu <- link(m5.1, post = prior, data = list(A = c(-2,2))) # Rango de 2 desviaciones estándar
+plot(NULL, xlim = c(-2, 2), ylim = c(-2, 2),
+     xlab = "Desviaciones estándar",
+     ylab = "mu")
+for (i in 1:50) lines(c(-2, 2), mu[i,], col = col.alpha("black", 0.4))
+```
+Prior manifiestamente mejorable.
+
+Predicciones posterior:
+
+```{r}
+# compute percentile interval of mean
+A_seq <- seq(from = -3, to = 3.2, length.out = 30)
+mu <-link(m5.1, data = list(A = A_seq))
+mu.mean <- apply(mu, 2, mean)
+mu.PI <- apply(mu, 2, PI)
+
+# plot it all
+plot(D ~ A, data = d, col = rangi2, 
+     xaxt = "n", yaxt = "n",
+     xlab = "Median Age Marriage",
+     ylab = "Divorce Rate")
+lines(A_seq, mu.mean, lwd = 2)
+shade(mu.PI,A_seq)
+
+at_y <-c(-2,-1,0,1,2)
+x_labels <- A_seq * sd(d$MedianAgeMarriage) + mean(d$MedianAgeMarriage)
+y_labels <- at_y * sd(d$Divorce) + mean(d$Divorce)
+axis(side = 1, at = A_seq, labels = round(x_labels, 0))
+axis(side = 2, at = at_y, labels = round(y_labels, 0))
+```
+```{r}
+precis(m5.1)
+```
+
+
+Modelo de regresión con rate of Marriage:
+
+```{r}
+m5.2 <- quap(
+  alist(
+    D ~ dnorm(mu, sigma),
+    mu <- a + bM * M,
+    a ~ dnorm(0, 0.2),
+    bM ~ dnorm(0, 0.5),
+    sigma ~ dexp(1)
+  ), data = d)
+
+# compute percentile interval of mean
+M_seq <- seq(from = -3, to = 3.2, length.out = 30)
+mu <-link(m5.2, data = list(M = M_seq))
+mu.mean <- apply(mu, 2, mean)
+mu.PI <- apply(mu, 2, PI)
+
+# plot it all
+plot(D ~ M, data = d, col = rangi2, 
+     xaxt = "n", yaxt = "n",
+     xlab = "Marriage Rate",
+     ylab = "Divorce Rate")
+lines(A_seq, mu.mean, lwd = 2)
+shade(mu.PI, M_seq)
+
+at_y <-c(-2,-1,0,1,2)
+x_labels <- M_seq * sd(d$Marriage) + mean(d$Marriage)
+y_labels <- at_y * sd(d$Divorce) + mean(d$Divorce)
+axis(side = 1, at = A_seq, labels = round(x_labels, 0))
+axis(side = 2, at = at_y, labels = round(y_labels, 0))
+```
+```{r}
+precis(m5.2)
+```
+
+
+¿Qué predictor es mejor? ¿Son redundantes? ¿Podemos eliminar uno?
+
+Desde un punto de vista de CAUSALIDAD:
+
+```{r}
+library(dagitty) 
+dag5.1 <- dagitty("dag{A->D;A->M;M->D}")
+coordinates(dag5.1) <- list(x = c(A = 0, D = 1, M = 2),
+                            y = c(A = 0, D = 1, M = 0))
+drawdag(dag5.1)
+```
+Para este DAG (Directed Acyclic Graph) las implicaciones comprobables son
+que todas las variables deberían estar asociadas, independientemente si 
+condicionamos alguna o no (condicionar = darle un valor fijo):
+
+```{r}
+impliedConditionalIndependencies(dag5.1)
+```
+
+Realmente es así, 
+ya que así lo indica la correlación, como hemos visto arriba
+
+Otro posible DAG sería:
+
+```{r}
+dag5.2 <- dagitty("dag{A->D;A->M}")
+coordinates(dag5.2) <- list(x = c(A = 0, D = 1, M = 2),
+                            y = c(A = 0, D = 1, M = 0))
+drawdag(dag5.2)
+```
+
+En este las implicaicones comprobables son que todas las variables están asociadas
+(M y D a través de A) antes de condicionar sobre alguna, pero resulta que M y D son
+independientes si condicionamos sobre A:
+
+```{r}
+impliedConditionalIndependencies(dag5.2)
+```
+Para comprobar esta implicación necesitamos un modelo que condicione sobre A, de 
+manera que podamos ver si en tal caso D y M son independientes.
+
+Para esto es útil la regresión multivariable. La pregunta que queremos responder es:
+
+*¿Añade algún valor conocer determinada variable predictora una vez conocemos los otros predictores?
+
+En nuestro caso, si ajustamos una regresión con la tasa de matrimonios (M) y 
+la edad al casarse (A) como predictores para explicar D (la tasa de divorcios):
+
++ Una vez que conocemos M ¿añade algún valor conocer A?
++ Una vez que conocemos A ¿añade algún valor conocer M?
+
+Los parámetros estimados de cada predictor son la a menudo opaca respuesta a estas
+preguntas.
+
+El modelo sería:
+
+```{r}
+m5.3 <- quap(
+  alist(
+    D ~ dnorm(mu, sigma),
+    mu <- a + bM * M + bA * A,
+    a  ~ dnorm(0, 0.2),
+    bM ~ dnorm(0, 0.5),
+    bA ~ dnorm(0, 0.5),
+    sigma ~ dexp(1)
+  ), data=d)
+
+precis(m5.3)
+```
+
+```{r}
+plot(coeftab(m5.1, m5.2, m5.3), par = c("bA","bM"))
+```
+
+La media posterior de bM ahora se mueve alrededor de 0, con casi la misma probabilidad
+en el lado positivo que en el negativo; la de bA casi no cambia (aunque tiene mayor incertidumbre,
+permanece positiva en todo el intervalo de compatibilidad). La interpretación sería:
+
+*Una vez que conocemos A, no hay (casi) poder predictivo añadido en conocer también M*
+
+M nos podría valer como variable proxy de A si no tuviéramos acceso a ésta. M
+es predictiva pero no causal.
+
+La asociación entre M y D es espúrea, debido a la influencia de la edad A tanto
+sobre la tasa de matrimonio M como sobre la de divorcio D.
+
+Para completar el cuadro haríamos otro modelo para la relación entre A y M.
+
+## Ejemplos de gráficos interpretativos para regresiones multivariable
+
+### Residuos de los predictores
+
+El residuo de un predictor es el error de predicción medio cuando usamos los otros 
+predictores para modelar aquel.
+
+M como función de A:
+
+```{r}
+m5.4 <- quap(
+  alist(
+    M ~ dnorm(mu, sigma),
+    mu <- a + bAM * A,
+    a ~ dnorm(0, 0.2),
+    bAM ~ dnorm(0, 0.5),
+    sigma ~ dexp(1)
+  ), data = d)
+```
+
+y los residuos de M:
+
+```{r}
+mu <- link(m5.4)
+mu_mean <- apply(mu, 2, mean)
+mu_resid <-d$M - mu_mean
+```
+
+
+
+### Predicciones posterior
+
+### Contrafactuales
