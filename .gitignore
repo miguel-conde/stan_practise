@@ -2,3 +2,6 @@
 .Rhistory
 .RData
 .Ruserdata
+stan_practise.Rproj
+renv
+.Rprofile
