@@ -190,3 +190,23 @@ ggplot(artists_summary_scaled,
   xaxis_text(angle = 90, hjust = 1)
 
 ## Posterior prediction
+
+# First consider the posterior prediction for an observed group or artist
+
+set.seed(84735)
+ocean_pps <- spotify_hierarchical_df %>% 
+  select(`(Intercept)`, `b[(Intercept) artist:Frank_Ocean]`, sigma) %>% 
+  mutate(mu_ocean = `(Intercept)` + `b[(Intercept) artist:Frank_Ocean]`,
+         .keep = "unused") %>% 
+  mutate(y_ocean = rnorm(20000, mu_ocean, sigma))
+
+ocean_pps %>% mean_qi(y_ocean, .width = .8)
+
+# Naturally, we can be much more certain about Ocean's underlying mean song 
+# popularity than in the popularity of any single Ocean song.
+
+artists_summary_scaled %>% 
+  filter(str_detect(artist, "Ocean"))
+
+# Next consider posterior prediction for a yet unobserved group
+
