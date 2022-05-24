@@ -36,7 +36,7 @@ artist_means <- spotify %>%
 artist_means %>% slice(1:2, 43:44)
 
 
-# Complete pooled model ---------------------------------------------------
+# 1 - Complete pooled model -----------------------------------------------
 
 spotify %>% 
   ggplot(aes(x = popularity)) +
@@ -76,7 +76,7 @@ ppc_intervals(y = artist_means$popularity, yrep = prediction_complete, prob_oute
   xaxis_text(angle = 90, hjust = 1)
 
 
-# No pooled model ---------------------------------------------------------
+# 2 - No pooled model -----------------------------------------------------
 
 ggplot(spotify, aes(x = popularity, group = artist)) +
   geom_density()
@@ -108,9 +108,9 @@ ppc_intervals(y = artist_means$popularity, yrep = prediction_complete, prob_oute
                               breaks = 1:nrow(artist_means)) +
   xaxis_text(angle = 90, hjust = 1)
 
-# Hierarchical ------------------------------------------------------------
+# 3 - Hierarchical --------------------------------------------------------
 
-## Posterior Simulation
+# 3.1 - Posterior Simulation ----------------------------------------------
 
 spotify_hierarchical <- 
   stan_glmer(formula = popularity ~ 1 + (1 | artist),
@@ -136,7 +136,8 @@ pp_check(spotify_hierarchical) + xlab("popularity")
 spotify_hierarchical_df <- spotify_hierarchical %>% as.data.frame()
 spotify_hierarchical_df %>% names()
 
-## Posterior analysis of global parameters
+
+# 3.2 - Posterior analysis of global parameters ---------------------------
 
 complete_summary <- tidy(spotify_hierarchical,
                          effects = c("fixed", "aux", "ran_pars"),
@@ -160,15 +161,16 @@ tidy(spotify_hierarchical,
 # differences among the songs within each artist:
 14 ^2 / (15.2^2 + 14^2)
 
-set.seed(84735)
-prediction_complete <- posterior_predict(spotify_hierarchical, newdata = artist_means)
+# set.seed(84735)
+# prediction_complete <- posterior_predict(spotify_hierarchical, newdata = artist_means)
+# 
+# ppc_intervals(y = artist_means$popularity, yrep = prediction_complete, prob_outer = .80) +
+#   ggplot2::scale_x_continuous(labels = artist_means$artist, 
+#                               breaks = 1:nrow(artist_means)) +
+#   xaxis_text(angle = 90, hjust = 1)
 
-ppc_intervals(y = artist_means$popularity, yrep = prediction_complete, prob_outer = .80) +
-  ggplot2::scale_x_continuous(labels = artist_means$artist, 
-                              breaks = 1:nrow(artist_means)) +
-  xaxis_text(angle = 90, hjust = 1)
 
-## Posterior analysis of group-specifica parameters
+# 3.3 - Posterior analysis of group-specifica parameters ------------------
 
 artists_summary <- tidy(spotify_hierarchical,
                         effects = c("ran_vals"),
@@ -189,9 +191,13 @@ ggplot(artists_summary_scaled,
   geom_pointrange() +
   xaxis_text(angle = 90, hjust = 1)
 
-## Posterior prediction
+
+# 3.4 - Posterior prediction ----------------------------------------------
 
 # First consider the posterior prediction for an observed group or artist
+
+# Variabilidad INTRA-grupo
+# Variabilidad de los hiperparámetros
 
 set.seed(84735)
 ocean_pps <- spotify_hierarchical_df %>% 
@@ -210,3 +216,49 @@ artists_summary_scaled %>%
 
 # Next consider posterior prediction for a yet unobserved group
 
+# Variabilidad INTRA-grupo
+# Variabilidad ENTRE grupos
+# Variabilidad de los hiperparámetros
+
+set.seed(84735)
+mohsen_chains <- spotify_hierarchical_df %>%
+  mutate(sigma_mu = sqrt(`Sigma[artist:(Intercept),(Intercept)]`),
+         mu_mohsen = rnorm(20000, `(Intercept)`, sigma_mu),
+         y_mohsen = rnorm(20000, mu_mohsen, sigma))
+
+# Posterior predictive summaries
+mohsen_chains %>% 
+  mean_qi(y_mohsen, .width = 0.80)
+
+# With posterior_predict()
+set.seed(84735)
+prediction_shortcut <- posterior_predict(
+  spotify_hierarchical,
+  newdata = data.frame(artist = c("Frank Ocean", "Mohsen Beats")))
+
+# Posterior predictive model plots
+mcmc_areas(prediction_shortcut, prob = 0.8) +
+  ggplot2::scale_y_discrete(labels = c("Frank Ocean", "Mohsen Beats"))
+
+
+# 3.5 - hrinkage and the bias-variance tradeoff --------------------------
+
+set.seed(84735)
+predictions_hierarchical <- posterior_predict(spotify_hierarchical, 
+                                              newdata = artist_means)
+
+# Posterior predictive plots
+ppc_intervals(artist_means$popularity, yrep = predictions_hierarchical, 
+              prob_outer = 0.80) +
+  ggplot2::scale_x_continuous(labels = artist_means$artist, 
+                              breaks = 1:nrow(artist_means)) +
+  xaxis_text(angle = 90, hjust = 1) + 
+  geom_hline(yintercept = 58.4, linetype = "dashed")
+
+# Figure 16.12 contrasts the hierarchical model posterior mean predictions with 
+# the complete pooled model predictions (dashed horizontal line) and no pooled 
+# model predictions (dark blue dots). In general, our hierarchical posterior 
+# understanding of artists strikes a balance between these two extremes – the 
+# hierarchical predictions are pulled or shrunk toward the global trends of the 
+# complete pooled model and away from the local trends of the no pooled model. 
+# Hence the term shrinkage.
