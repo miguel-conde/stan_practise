@@ -48,10 +48,26 @@ coef_multilvl_lm <- coef(multilvl_lm)$runner %>%
 
 running %>% filter(runner %in% 1:10) %>% 
   ggplot(aes(age, net)) +
+  ## LM POOLED
   geom_point() +
-  geom_smooth(color = "black", size = 2, method = "lm", se = FALSE) +
+  geom_smooth(data = running, mapping = aes(age, net), color = "black", 
+              size = 2, method = "lm", se = FALSE) +
+  ## LM NO POOLING
   geom_point(aes(color = runner)) +
   geom_smooth(aes(color = runner), method = "lm", se = FALSE) +  
+  ## LM MULTILEVEL
+  # FIXED + RANDOM EFFECTS
   geom_abline(data = coef_multilvl_lm  %>% slice(1:10), 
               mapping = aes(intercept = intercept, slope = slope, color = runner), 
-              linetype = 2, size = 1.2)
+              linetype = 2, size = 1.2) +
+  # FIXED EFFECTS (AVERAGE REGRESSION)
+  geom_abline(data = coef_multilvl_lm %>% 
+                summarise_if(is.numeric, mean), 
+              mapping = aes(intercept = intercept, slope = slope), 
+              color = "black",
+              linetype = 2, size = 2) +
+  xlim(40, NA)
+
+fixef(multilvl_lm)
+coef_multilvl_lm %>% 
+  summarise_if(is.numeric, mean)
