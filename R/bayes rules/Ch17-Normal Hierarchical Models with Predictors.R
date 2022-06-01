@@ -149,6 +149,8 @@ running %>%
 ggplot(running, aes(x = age, y = net, group = runner)) + 
   geom_smooth(method = "lm", se = FALSE, size = 0.5)
 
+# 17.3.3 Posterior simulation & analysis ----------------------------------
+
 running_model_2 <- stan_glmer(
   net ~ age + (age | runner),
   data = running, family = gaussian,
@@ -156,8 +158,45 @@ running_model_2 <- stan_glmer(
   prior = normal(2.5, 1), 
   prior_aux = exponential(1, autoscale = TRUE),
   prior_covariance = decov(reg = 1, conc = 1, shape = 1, scale = 1),
-  chains = 4, iter = 5000*2, seed = 84735, adapt_delta = 0.99999
+  chains = 4, iter = 5000*2, seed = 84735, adapt_delta = 0.99999 # <= SLOOOWW
 )
 
 # Confirm the prior model specifications
 prior_summary(running_model_2)
+
+# Quick summary of global regression parameters
+tidy(running_model_2, effects = "fixed", conf.int = TRUE, conf.level = 0.80)
+
+# spread_draws() uses b[term, runner] to grab the chains for all runner-specific 
+# parameters. As usual now, these chains correspond to  b_oj and b_1j, the 
+# differences between the runner-specific vs global intercepts and age coefficients.
+# Get MCMC chains for the runner-specific intercepts & slopes
+runner_chains_2 <- running_model_2 %>%
+  spread_draws(`(Intercept)`, b[term, runner], `age`) %>% 
+  pivot_wider(names_from = term, names_glue = "b_{term}",
+              values_from = b) %>% 
+  mutate(runner_intercept = `(Intercept)` + `b_(Intercept)`,
+         runner_age = age + b_age)
+
+runner_summaries_2 <- runner_chains_2 %>% 
+  group_by(runner) %>% 
+  summarize(runner_intercept = median(runner_intercept),
+            runner_age = median(runner_age))
+
+ggplot(running, aes(y = net, x = age, group = runner)) + 
+  geom_abline(data = runner_summaries_2, color = "gray",
+              aes(intercept = runner_intercept, slope = runner_age)) + 
+  lims(x = c(50, 61), y = c(50, 135))
+
+#  We were slightly surprised. The slopes do differ, but not as drastically as 
+# we expected. But then we remembered – shrinkage! Consider sample runners 1 and 
+# 10. Their posteriors suggest that, on average, runner 10’s running time 
+# increases by just 1.06 minute per year, whereas runner 1’s increases by 1.75 
+# minutes per year:
+runner_summaries_2 %>% 
+  filter(runner %in% c("runner:1", "runner:10"))
+
+
+# 17.3.3.2 Posterior analysis of within- and between-group variabi --------
+
+tidy(running_model_2, effects = "ran_pars")

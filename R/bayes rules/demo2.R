@@ -71,3 +71,26 @@ running %>% filter(runner %in% 1:10) %>%
 fixef(multilvl_lm)
 coef_multilvl_lm %>% 
   summarise_if(is.numeric, mean)
+
+running  %>% 
+  ggplot(aes(age, net)) +
+  ## LM POOLED
+  geom_point() +
+  geom_smooth(data = running, mapping = aes(age, net), color = "black", 
+              method = "lm", se = FALSE) +
+  ## LM NO POOLING
+  geom_point() +
+  geom_smooth(aes(color = runner), method = "lm", se = FALSE) +
+  facet_wrap("runner") +
+  ## LM MULTILEVEL
+  # FIXED + RANDOM EFFECTS
+  geom_abline(data = coef_multilvl_lm , 
+              mapping = aes(intercept = intercept, slope = slope, color = runner), 
+              linetype = 2, size = 1) +
+  # FIXED EFFECTS (AVERAGE REGRESSION)
+  geom_abline(data = coef_multilvl_lm %>% 
+                summarise_if(is.numeric, mean), 
+              mapping = aes(intercept = intercept, slope = slope), 
+              color = "black",
+              linetype = 2, size = 1) +
+    facet_wrap("runner")
