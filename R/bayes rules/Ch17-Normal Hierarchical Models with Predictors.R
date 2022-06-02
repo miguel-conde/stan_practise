@@ -8,6 +8,8 @@ library(bayesplot)
 library(tidybayes)
 library(broom.mixed)
 
+library(rstan)
+
 options(mc.cores = parallel:: detectCores())
 rstan_options(auto_write = TRUE)
 
@@ -161,6 +163,8 @@ running_model_2 <- stan_glmer(
   chains = 4, iter = 5000*2, seed = 84735, adapt_delta = 0.99999 # <= SLOOOWW
 )
 
+saveRDS(running_model_2, "outputs/running_model_2.Rds")
+
 # Confirm the prior model specifications
 prior_summary(running_model_2)
 
@@ -200,3 +204,138 @@ runner_summaries_2 %>%
 # 17.3.3.2 Posterior analysis of within- and between-group variabi --------
 
 tidy(running_model_2, effects = "ran_pars")
+
+
+# 17.4 Model evaluation & selection ---------------------------------------
+
+
+pp_check(complete_pooled_model) + 
+  labs(x = "net", title = "complete pooled model")
+
+pp_check(running_model_1) + 
+  labs(x = "net", title = "running model 1")
+
+pp_check(running_model_2) + 
+  labs(x = "net", title = "running model 2")
+
+# Calculate prediction summaries
+set.seed(84735)
+
+prediction_summary(model = running_model_1, data = running)
+
+prediction_summary(model = running_model_2, data = running)
+
+prediction_summary_cv(model = running_model_1, data = running,
+                      k = 10, group = "runner")
+
+# Calculate ELPD for the 2 models
+elpd_hierarchical_1 <- loo(running_model_1)
+elpd_hierarchical_2 <- loo(running_model_2)
+
+
+# Compare the ELPD
+loo_compare(elpd_hierarchical_1, elpd_hierarchical_2)
+
+
+# 17.5 Posterior prediction -----------------------------------------------
+
+# Plot runner-specific trends for runners 1 & 10
+running %>% 
+  filter(runner %in% c("1", "10")) %>% 
+  ggplot(., aes(x = age, y = net)) + 
+  geom_point() + 
+  facet_grid(~ runner) + 
+  lims(x = c(54, 61))
+
+# Simulate posterior predictive models for the 3 runners
+set.seed(84735)
+predict_next_race <- posterior_predict(
+  running_model_1, 
+  newdata = data.frame(runner = c("1", "Miles", "10"),
+                       age = c(61, 61, 61)))
+
+# Posterior predictive model plots
+mcmc_areas(predict_next_race, prob = 0.8) +
+  ggplot2::scale_y_discrete(labels = c("runner 1", "Miles", "runner 10"))
+
+
+# 17.7 Example: Danceability ----------------------------------------------
+
+# Let’s implement our hierarchical regression tools in a different context, by 
+# revisiting our spotify data from Chapter 16. There we studied a hierarchical 
+# model of song popularity, accounting for the fact that we had grouped data with 
+# multiple songs per sampled artist. Here we’ll switch our focus to a song’s 
+# danceability and how this might be explained by two features: its genre and 
+# valence or mood. The danceability and valence of a song are both measured on a 
+# scale from 0 (low) to 100 (high). Thus, lower valence scores are assigned to 
+# negative / sad / angry songs and higher scores to positive / happy / euphoric 
+# songs.
+# Import and wrangle the data
+
+data(spotify)
+
+spotify <- spotify %>% 
+  select(artist, title, danceability, valence, genre)
+
+ggplot(spotify, aes(y = danceability, x = genre)) + 
+  geom_boxplot()
+ggplot(spotify, aes(y = danceability, x = valence)) + 
+  geom_point()
+ggplot(spotify, aes(y = danceability, x = valence, group = artist)) + 
+  geom_smooth(method = "lm", se = FALSE, size = 0.5)
+
+spotify_model_1 <- stan_glmer(
+  danceability ~ valence + genre + (1 | artist),
+  data = spotify, family = gaussian,
+  prior_intercept = normal(50, 2.5, autoscale = TRUE),
+  prior = normal(0, 2.5, autoscale = TRUE), 
+  prior_aux = exponential(1, autoscale = TRUE),
+  prior_covariance = decov(reg = 1, conc = 1, shape = 1, scale = 1),
+  chains = 4, iter = 5000*2, seed = 84735)
+
+spotify_model_2 <- stan_glmer(
+  danceability ~ valence + genre + (valence | artist), 
+  data = spotify, family = gaussian,
+  prior_intercept = normal(50, 2.5, autoscale = TRUE),
+  prior = normal(0, 2.5, autoscale = TRUE), 
+  prior_aux = exponential(1, autoscale = TRUE),
+  prior_covariance = decov(reg = 1, conc = 1, shape = 1, scale = 1),
+  chains = 4, iter = 5000*2, seed = 84735)
+
+# Check out the prior specifications
+prior_summary(spotify_model_1)
+prior_summary(spotify_model_2)
+
+pp_check(spotify_model_1) +
+  xlab("danceability")
+pp_check(spotify_model_2) +
+  xlab("danceability")
+
+# Calculate ELPD for the 2 models
+elpd_spotify_1 <- loo(spotify_model_1)
+elpd_spotify_2 <- loo(spotify_model_2)
+
+# Compare the ELPD
+loo_compare(elpd_spotify_1, elpd_spotify_2)
+
+# Plot the posterior models of the genre coefficients
+mcmc_areas(spotify_model_1, pars = vars(starts_with("genre")), prob = 0.8) + 
+  geom_vline(xintercept = 0)
+
+tidy(spotify_model_1, effects = "ran_vals",
+     conf.int = TRUE, conf.level = 0.80) %>% 
+  filter(level %in% c("Camilo", "Missy_Elliott")) %>% 
+  select(level, estimate, conf.low, conf.high)
+
+# Simulate posterior predictive models for the 3 artists
+set.seed(84735)
+predict_next_song <- posterior_predict(
+  spotify_model_1,
+  newdata = data.frame(
+    artist = c("Camilo", "Mohsen Beats", "Missy Elliott"), 
+    valence = c(80, 60, 90), genre = c("latin", "rock", "rap")))
+
+# Posterior predictive model plots
+mcmc_areas(predict_next_song, prob = 0.8) +
+  ggplot2::scale_y_discrete(
+    labels = c("Camilo", "Mohsen Beats", "Missy Elliott"))
