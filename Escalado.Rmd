@@ -1,0 +1,76 @@
+---
+title: "Untitled"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+# Escalado de datos en modelos bayesianos
+
+Es beneficioso utilizar datos escalados para alimentar modelos bayesianos con stan.
+
+Por ejemplo, el modelo lineal:
+
+$$
+y_i = \beta_0 + \beta_1 x_1 + \epsilon_i \\
+\epsilon_i \sim N(0, \sigma)
+$$
+
+Corresponde a un modelo escalado:
+
+$$
+\frac{y_i - \bar{y}}{s_y} = \alpha_0 + \alpha_1 \frac{x_i - \bar{x}}{s_x} + \delta_i \\
+\alpha_0 \sim N(0, 1) \\
+\alpha_1 \sim N(0, 1) \\
+\delta_i \sim N(0, 1)
+$$
+
+De aquí:
+
+$$
+y_i = \big[s_y \alpha_0 - \alpha_1 \frac{s_y}{s_x}\bar{x} + \bar{y}\big] + \alpha_1 \frac{s_y}{s_x} x_1 + s_y \delta_i 
+$$
+
+Identificando:
+
+$$
+\beta_0 = s_y \alpha_0 - \alpha_1 \frac{s_y}{s_x}\bar{x} + \bar{y} \\
+\beta_1 = \alpha_1 \frac{s_y}{s_x} \\
+\epsilon_i = s_y \delta_i
+$$
+
+luego:
+
+$$
+\bar{\beta}_0 = \bar{y} \\
+s_{\beta_0}^2 = s_y^2 + \big(\alpha_1 \frac{s_y}{s_x}\bar{x})^2
+$$
+
+también:
+
+$$
+\bar{\beta}_1 = 0 \\
+s_{\beta_1}^2 = \big(\frac{s_y}{s_x})^2
+$$
+
+y:
+
+$$
+\bar{\epsilon} = 0\\
+s^2 = s_y^2 
+$$
+
+Con todo lo anterior:
+
+$$
+\mu_i = \beta_0 + \beta_1 x_i \\
+y_i \sim N(\mu_i, \sigma) \\
+\beta_0 = \bar{y} + \alpha_0 \sqrt{s_y^2 + \big(\alpha_1 \frac{s_y}{s_x}\bar{x})^2} \\
+\beta_1 = \alpha_1 \frac{s_y}{s_x} \\
+\sigma = s_y \sigma_{\delta}\\
+\alpha_0 \sim N(0, 1)\\
+\alpha_1 \sim N(0, 1) \\
+\sigma_{\delta} = Exp(1)
+$$
