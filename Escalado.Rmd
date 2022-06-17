@@ -72,5 +72,22 @@ y_i \sim N(\mu_i, \sigma) \\
 \sigma = s_y \sigma_{\delta}\\
 \alpha_0 \sim N(0, 1)\\
 \alpha_1 \sim N(0, 1) \\
-\sigma_{\delta} = Exp(1)
+\sigma_{\delta} \sim Exp(1)
+$$
+# Modelo jerárquico
+
+Sobre lo anterior:
+
++ El escalado hay que hacerlo por grupo
++ Los hiperparámetros hay que modelarlos:
+
+$$
+\alpha_0 \sim N(\bar{\alpha}_0, \sigma_{alpha_0})\\
+\alpha_1 \sim N(\bar{\alpha}_1, \sigma_{alpha_1}) \\
+\sigma_{\delta} = Exp(1) ?? 
+\\
+\bar{\alpha}_0 \sim N(0,1) \\
+\sigma_{alpha_0} \sim Exp(1) \\
+\bar{\alpha}_1 \sim N(0,1) \\
+\sigma_{alpha_1} \sim Exp(1)
 $$

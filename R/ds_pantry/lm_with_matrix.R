@@ -89,8 +89,7 @@ rstantools::posterior_epred(fit_stan_m2)
 
 # Reparametrización QR ----------------------------------------------------
 
-x <- model.matrix(height ~. , d)
-model_data <- c(compose_data(X), intcpt = TRUE)
+x <- model.matrix(height ~.-1 , d)
 
 stan_m3 <- stan_model(file = "R/ds_pantry/lm_with_matrix3.stan")
 
@@ -98,12 +97,11 @@ fit_stan_m3 <- sampling(stan_m3,
                         iter = 10000, chains = 1, 
                         # control = list(adapt_delta = 0.99),
                         data = c(compose_data(x),
-                                 y = d$height,
-                                 N = nrow(X), K = ncol(X), 
-                                 intcpt = TRUE),
+                                 y = list(d$height),
+                                 N = nrow(x), K = ncol(x)),
                         verbose = TRUE)
 
-print(fit_stan_m3, pars = c("beta_intcpt", "beta_weight", "beta_age", "beta_male"))
+print(fit_stan_m3, pars = c("beta"))
 traceplot(fit_stan_m3, pars = c("beta_intcpt", "beta_weight", "beta_age", "beta_male"))
 
 fit_lm <- lm(height ~ ., d)
@@ -114,3 +112,10 @@ plot(d$height, fitted(fit_lm))
 plot(d$height, extract(fit_stan_m2, "mu")[[1]] %>% apply(2, mean))
 
 plot(fitted(fit_lm), extract(fit_stan_m3, "mu")[[1]] %>% apply(2, mean))
+
+
+###
+
+d %>% group_by(male) %>% 
+  summarise_all(list(avg = ~ mean(.x), sd = ~ sd(.x)),
+            .names = "{.col}_{.fn}")
